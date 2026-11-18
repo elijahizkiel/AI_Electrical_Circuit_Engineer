@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["results"],"properties":{"results":{"type":"array","items":{"type":"object","required":["requirement_id","status","evidence"],"properties":{"status":{"enum":["pass","fail","not_tested","inconclusive"]}}}}},"additionalProperties":false}

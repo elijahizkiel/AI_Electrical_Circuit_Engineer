@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["status","findings"],"properties":{"status":{"enum":["approved","changes_requested","rejected"]},"findings":{"type":"array"}},"additionalProperties":true}

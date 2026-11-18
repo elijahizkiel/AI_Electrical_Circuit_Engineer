@@ -1,0 +1,18 @@
+{
+  "name": "Educational RC low-pass",
+  "request": "Create a 5 V educational RC low-pass simulation with a 1.59 kHz cutoff.",
+  "scope": "low_voltage_educational",
+  "simulator": "none",
+  "requirements": [{"id":"REQ-CUTOFF-001","description":"Nominal RC cutoff frequency","measurement_id":"cutoff_frequency_hz","operator":"between","target":{"min":1500,"max":1680},"unit":"Hz","severity":"required"}],
+  "circuit_ir": {
+    "schema_version":"1.0","design_id":"rc-lowpass","design_revision":1,"title":"Educational RC low-pass","units":"SI",
+    "nodes":[{"id":"0","kind":"ground"},{"id":"vin","kind":"signal"},{"id":"vout","kind":"signal"}],
+    "components":[
+      {"ref":"V1","kind":"voltage_source","model":"ideal_voltage_source","pins":{"positive":"vin","negative":"0"},"parameters":{"dc_voltage_v":5},"tunable":false},
+      {"ref":"R1","kind":"resistor","model":"ideal_resistor","pins":{"1":"vin","2":"vout"},"parameters":{"resistance_ohm":1000},"tunable":true,"bounds":{"resistance_ohm":{"min":100,"max":10000}}},
+      {"ref":"C1","kind":"capacitor","model":"ideal_capacitor","pins":{"1":"vout","2":"0"},"parameters":{"capacitance_farad":1e-7},"tunable":true,"bounds":{"capacitance_farad":{"min":1e-9,"max":1e-5}}}
+    ],
+    "analyses":[{"kind":"ac","points_per_decade":100,"start_frequency_hz":10,"stop_frequency_hz":100000}],
+    "measurements":[{"id":"cutoff_frequency_hz","kind":"derived","signal":"V(vout)","unit":"Hz"}],"source_requirements":["REQ-CUTOFF-001"]
+  }
+}

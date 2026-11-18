@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["requested","netlist","capabilities"],"properties":{"requested":{"enum":["none","ltspice","proteus"]},"netlist":{"type":"string"},"asc":{"type":"string"},"capabilities":{"type":"object"}},"additionalProperties":false}
