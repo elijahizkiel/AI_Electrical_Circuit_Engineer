@@ -7,7 +7,7 @@ name = "ai-electrical-circuit-agent"
 version = "0.4.0"
 description = "Traceable, low-voltage educational circuit simulation workflow"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["cryptography>=42"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

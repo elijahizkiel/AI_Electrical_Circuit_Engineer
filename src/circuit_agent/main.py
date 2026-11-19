@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse,json,shutil
 from pathlib import Path
 from .domain import ApprovalRequired
+from .api import serve
 from .orchestrator import Orchestrator
 from .storage import ProjectStore
 from .validation import validate_circuit_ir,validate_requirements
@@ -15,13 +16,16 @@ def main(argv:list[str]|None=None)->int:
     for name in ("run","status","resume","cancel"): sub.add_parser(name).add_argument("project_id")
     ap=sub.add_parser("approve"); ap.add_argument("project_id"); ap.add_argument("--subject",required=True,choices=["design","optimization"]); ap.add_argument("--revision",required=True,type=int); ap.add_argument("--comment",default="")
     ep=sub.add_parser("export"); ep.add_argument("project_id"); ep.add_argument("--out",required=True)
+    server=sub.add_parser("serve",help="Run the local JSON API"); server.add_argument("--host",default="127.0.0.1"); server.add_argument("--port",type=int,default=8000)
     args=parser.parse_args(argv)
     if args.command in {"validate","create"}:
         spec=json.loads(Path(args.spec).read_text()); errors=validate_requirements(spec)+validate_circuit_ir(spec.get("circuit_ir",{}))
         if args.command=="validate": print(json.dumps({"valid":not errors,"errors":errors},indent=2)); return 0 if not errors else 2
         if errors: print(json.dumps({"valid":False,"errors":errors},indent=2)); return 2
         store=runtime(args); pid=store.create_project(spec); print(pid); return 0
-    store=runtime(args); orchestrator=Orchestrator(store)
+    store=runtime(args)
+    if args.command=="serve": serve(store,args.host,args.port); return 0
+    orchestrator=Orchestrator(store)
     if args.command=="status": print(json.dumps(store.project(args.project_id),indent=2)); return 0
     if args.command=="run": print(json.dumps(orchestrator.run(args.project_id),indent=2)); return 0
     if args.command=="approve": store.approve(args.project_id,args.subject,str(args.revision),comment=args.comment); print("approval recorded"); return 0

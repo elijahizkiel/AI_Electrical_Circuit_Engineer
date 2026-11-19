@@ -1,0 +1,6 @@
+{
+  "requirements_analyst": {"provider": "mock", "model": "deterministic", "temperature": 0.1, "timeout_seconds": 60, "max_retries": 1},
+  "circuit_architect": {"provider": "mock", "model": "deterministic", "temperature": 0.2, "timeout_seconds": 90, "max_retries": 1},
+  "design_engineer": {"provider": "mock", "model": "deterministic", "temperature": 0.1, "timeout_seconds": 90, "max_retries": 1},
+  "design_reviewer": {"provider": "mock", "model": "deterministic-reviewer", "temperature": 0.0, "timeout_seconds": 90, "max_retries": 1}
+}

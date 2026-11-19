@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib, json, sqlite3, uuid
+import hashlib, json, os, sqlite3, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,7 @@ class ProjectStore:
         CREATE TABLE IF NOT EXISTS measurements(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),simulation_run_id TEXT,measurement_key TEXT NOT NULL,value REAL,unit TEXT,source_artifact_id TEXT,metadata_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),subject_type TEXT NOT NULL,subject_id TEXT NOT NULL,decision TEXT NOT NULL,comment TEXT,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),event_type TEXT NOT NULL,actor TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value_json TEXT NOT NULL,updated_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_artifacts_project_type ON artifacts(project_id,artifact_type); CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id,created_at);
         """); self.conn.commit()
     def create_project(self, spec: dict) -> str:
@@ -55,8 +56,54 @@ class ProjectStore:
     def latest_artifact(self,pid:str,kind:str)->dict|None:
         row=self.conn.execute("SELECT storage_path FROM artifacts WHERE project_id=? AND artifact_type=? ORDER BY revision DESC LIMIT 1",(pid,kind)).fetchone(); return json.loads(Path(row[0]).read_text()) if row else None
     def artifacts(self,pid:str)->list[dict]: return [dict(x) for x in self.conn.execute("SELECT * FROM artifacts WHERE project_id=? ORDER BY created_at",(pid,))]
+    def events(self,pid:str)->list[dict]:
+        rows=[]
+        for row in self.conn.execute("SELECT * FROM events WHERE project_id=? ORDER BY created_at",(pid,)):
+            event=dict(row); event["payload"]=json.loads(event.pop("payload_json")); rows.append(event)
+        return rows
+    def model_settings(self) -> dict:
+        row=self.conn.execute("SELECT value_json FROM settings WHERE key='model_configuration'").fetchone()
+        result=json.loads(row[0]) if row else {"provider":"mock","model":"deterministic","base_url":"","temperature":0.1,"max_tokens":4096,"enabled":True}
+        result["api_key_configured"]=bool(result.get("api_key_ciphertext")); result.pop("api_key_ciphertext",None)
+        result["api_key_masked"]="••••••••" if result["api_key_configured"] else ""
+        result["adapter_available"]=result.get("provider")=="mock"
+        return result
+    def _fernet(self):
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError as exc:
+            raise RuntimeError("API-key persistence requires the cryptography package; run pip install -e .") from exc
+        key_path=self.database_path.with_suffix(".master.key")
+        key=os.environ.get("CIRCUIT_AGENT_MASTER_KEY")
+        if key is None:
+            if key_path.exists(): key=key_path.read_bytes()
+            else:
+                key=Fernet.generate_key(); key_path.write_bytes(key); os.chmod(key_path,0o600)
+        return Fernet(key)
+    def save_model_settings(self, provider: str, model: str, api_key: str|None="", base_url: str="", temperature: float=0.1, max_tokens: int=4096, enabled: bool=True, clear_api_key: bool=False) -> dict:
+        if not isinstance(provider,str) or not provider.strip() or len(provider)>80: raise ValueError("provider must be a non-empty string up to 80 characters")
+        if not isinstance(model,str) or not model.strip() or len(model)>160: raise ValueError("model must be a non-empty string up to 160 characters")
+        if not isinstance(base_url,str) or len(base_url)>500: raise ValueError("base_url is too long")
+        if not isinstance(temperature,(int,float)) or not 0 <= temperature <= 2: raise ValueError("temperature must be between 0 and 2")
+        if not isinstance(max_tokens,int) or not 1 <= max_tokens <= 1000000: raise ValueError("max_tokens is out of range")
+        existing=self.conn.execute("SELECT value_json FROM settings WHERE key='model_configuration'").fetchone(); previous=json.loads(existing[0]) if existing else {}
+        ciphertext=previous.get("api_key_ciphertext")
+        if clear_api_key: ciphertext=None
+        elif api_key:
+            if not isinstance(api_key,str) or len(api_key)>10000: raise ValueError("api_key is invalid")
+            ciphertext=self._fernet().encrypt(api_key.encode()).decode()
+        result={"provider":provider.strip(),"model":model.strip(),"base_url":base_url.strip(),"temperature":float(temperature),"max_tokens":max_tokens,"enabled":bool(enabled),"api_key_ciphertext":ciphertext}
+        self.conn.execute("INSERT INTO settings(key,value_json,updated_at) VALUES('model_configuration',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",(canonical(result),utcnow())); self.conn.commit(); return self.model_settings()
     def approve(self,pid:str,subject_type:str,subject_id:str,decision="approved",comment="") -> None:
         self.conn.execute("INSERT INTO approvals VALUES(?,?,?,?,?,?,?)",(str(uuid.uuid4()),pid,subject_type,subject_id,decision,comment,utcnow())); self.event(pid,"user_approval_recorded","user",{"subject_type":subject_type,"subject_id":subject_id,"decision":decision}); self.conn.commit()
     def approved(self,pid:str,subject_type:str,subject_id:str)->bool: return bool(self.conn.execute("SELECT 1 FROM approvals WHERE project_id=? AND subject_type=? AND subject_id=? AND decision='approved'",(pid,subject_type,subject_id)).fetchone())
+    def record_simulation_run(self, pid: str, design_artifact_id: str, adapter: str, result: dict) -> str:
+        run_id = str(uuid.uuid4()); now = utcnow()
+        self.conn.execute("INSERT INTO simulation_runs VALUES(?,?,?,?,?,?,?,?,?,?)", (run_id,pid,design_artifact_id,adapter,result.get("simulator_version"),result.get("status","unknown"),now,utcnow(),result.get("exit_code"),canonical(result)))
+        self.event(pid,"simulator_completed","simulator_adapter",{"run_id":run_id,"adapter":adapter,"status":result.get("status")}); self.conn.commit(); return run_id
+    def record_measurements(self, pid: str, run_id: str, measurements: list[dict], source_artifact_id: str) -> None:
+        for measurement in measurements:
+            self.conn.execute("INSERT INTO measurements VALUES(?,?,?,?,?,?,?,?)", (str(uuid.uuid4()),pid,run_id,measurement["id"],measurement["value"],measurement["unit"],source_artifact_id,canonical(measurement)))
+        self.event(pid,"measurements_extracted","waveform_analyst",{"run_id":run_id,"count":len(measurements)}); self.conn.commit()
     def cancel(self,pid:str)->None: self.transition(pid,State.CANCELLED,"user")
     def close(self)->None: self.conn.close()

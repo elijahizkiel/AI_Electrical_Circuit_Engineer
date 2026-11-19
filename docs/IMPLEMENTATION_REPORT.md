@@ -32,13 +32,18 @@ This was chosen for four reasons:
 | Persistent project state | `src/circuit_agent/storage.py` | SQLite supports local-first use, restart recovery, and a small deployment footprint. |
 | Artifact revisioning | `ProjectStore.artifact()` | Each artifact receives an ID, revision, SHA-256 content hash, parent links, and an immutable on-disk envelope. |
 | Specialized roles | `src/circuit_agent/agents.py` | Requirements, architecture, design, independent review, and optimization are separate stateless classes with distinct responsibilities. |
-| Provider abstraction | `LLMProvider` protocol in `agents.py` | Agent logic can later use a configured provider without coupling the workflow to one vendor. The current supplied path is deterministic/mock. |
+| Provider abstraction | `src/circuit_agent/llm.py`, `config/agents.json`, and `prompts/` | A provider registry, schema-required structured mock provider, retry/timeout boundary, and versioned role prompts allow a configured provider to be added without coupling the workflow to one vendor. |
 | Circuit contract and validation | `validation.py`, `schemas/circuit_ir.schema.json` | A strict canonical IR blocks unsupported models, unknown nodes, invalid pins, missing ground, malformed bounds, and unrecognized top-level IR fields. |
 | Tool boundary | `tools.py` | Netlist generation and measurement analysis are deterministic functions rather than LLM-issued shell operations. |
 | LTspice support | `simulators.py` | The adapter prepares a `.cir` and a deliberately limited `.asc`, and only runs LTspice when an executable is configured. |
 | Proteus support | `ProteusHandoffAdapter` | It creates an IR/netlist/manifest handoff only. Native automation is represented as a configured, trusted bridge capability, not guessed project-file generation. |
 | Measurements and verification | `tools.py`, `validation.verify()` | Source-linked CSV/log measurements feed explicit comparison operators. This prevents a successful process exit from being mistaken for a verified design. |
 | Human review | `approvals` table and `resume()` | Simulator execution cannot proceed until an approval for the persisted design revision exists. |
+| Test simulation | `FakeSimulatorAdapter` | A deterministic RC fixture supports repeatable integration tests and is expressly labelled as non-LTspice, non-physical evidence. |
+| Tool permissions | `src/circuit_agent/permissions.py` | An explicit allow-list gives each specialized role only its intended deterministic tools. |
+| Bounded optimization | `Optimizer` and `Orchestrator._propose_optimization()` | A failed eligible criterion can produce one bounded immutable IR revision per iteration; every candidate requires optimization approval, independent design review, and design approval before simulation. |
+| Local host API and dashboard | `src/circuit_agent/api.py`, `web.py` | A dependency-free local API and browser dashboard expose only project lifecycle operations. They intentionally cannot execute arbitrary tools or commands. |
+| Model/provider configuration | `settings` storage, `/settings/model`, and dashboard | Provider, model, endpoint, generation controls, enabled state, and encrypted API-key configuration persist in SQLite. API keys are write-only and redacted from responses. |
 | Reporting | `orchestrator._report()` | Produces both a machine-readable report artifact and `report.md`, clearly retaining human-review and evidence limitations. |
 | CLI | `src/circuit_agent/main.py` | The CLI is the first supported interface as requested: validate, create, run, status, approve, resume, cancel, and export. |
 
@@ -75,7 +80,8 @@ The implementation was checked with:
 1. Python compilation of all source and compatibility scripts.
 2. Validation of `examples/rc_lowpass/spec.json`.
 3. An end-to-end artifact-only workflow: create → run → persisted design approval → resume → report generation.
-4. Safety and verification checks confirming that a 230 VAC request is rejected and a missing measurement is `not_tested`.
+4. A deterministic fake-simulator workflow that calculates the supported RC cutoff fixture, persists a simulation-run record and measurement row, and verifies the declared cutoff requirement.
+5. Safety and verification checks confirming that a 230 VAC request is rejected and a missing measurement is `not_tested`.
 
 The environment did not have `pytest` installed, so the included tests in `tests/` were not executed through pytest during implementation. They are configured for normal execution after installing the development dependency:
 
@@ -88,11 +94,11 @@ pytest -q
 
 The delivered foundation implements the core vertical slice, but several specification items remain intentionally bounded:
 
-- The default agent path is deterministic/mock; provider registry, prompt files, redaction, latency tracking, and structured-output repair are extension points rather than complete provider integrations.
+- The default agent path is deterministic/mock. Provider registry, prompts, retry/timeout handling, and required-field validation are implemented; a credentialed external-provider adapter, secret redaction, usage tracking, and full JSON Schema validation of provider responses remain future work.
 - The initial architect/design role supports a provided IR and an RC-style educational example; it is not a general topology synthesizer.
 - LTspice ASC output is limited and must be opened and checked in LTspice.
 - Binary `.raw` waveform parsing is not implemented.
-- The optimization role creates a bounded proposal but is not yet wired into the full approval/simulate/revision iteration loop.
+- The optimizer currently proposes a simple single-parameter candidate heuristic. Candidate generation, parameter-bound enforcement, immutable revisions, approval, review, re-simulation, and the iteration budget are wired into the workflow; richer objective functions and duplicate-candidate detection remain future work.
 - Cancellation, task timeouts/retries, unit conversion, FastAPI endpoints, and detailed simulator-run database records are not yet fully exercised by the first vertical slice.
 
 These limits are exposed rather than approximated, consistent with the specification’s instruction not to claim unsupported capabilities. The recommended next increment is to complete the fake-simulator integration path, wire measurements and verification through a known fixture, then add a real LLM provider behind the existing protocol.
